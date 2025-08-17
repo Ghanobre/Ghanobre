@@ -9,25 +9,15 @@ on:
 jobs:
   robot-tests:
     runs-on: self-hosted
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Reforça env no job (além do .env do serviço)
       - name: Export env for job
         run: |
           echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
           echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
           echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
-
-      - name: Debug env
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
-          which adb || true
-          which emulator || true
-          which appium || true
 
       - name: Start Android emulator (WSL safe)
         shell: bash
@@ -39,11 +29,8 @@ jobs:
             -accel off \
             -no-boot-anim \
             >/tmp/emulator.log 2>&1 &
-
           adb start-server
           adb wait-for-device
-
-          # Espera resiliente: 3 sinais diferentes
           timeout 300 bash -c '
             until adb shell "getprop init.svc.bootanim | grep -q stopped" \
                || [ "$(adb shell getprop dev.bootcomplete 2>/dev/null | tr -d "\r")" = "1" ] \
@@ -52,12 +39,7 @@ jobs:
               sleep 3
             done
           '
-
-          # Desbloquear e reduzir animações
           adb shell input keyevent 82 || true
-          adb shell settings put global window_animation_scale 0 || true
-          adb shell settings put global transition_animation_scale 0 || true
-          adb shell settings put global animator_duration_scale 0 || true
           echo "Emulador pronto!"
 
       - name: Start Appium
@@ -73,18 +55,42 @@ jobs:
           '
           echo "Appium está rodando!"
 
-      - name: Run Robot tests
+      - name: Discover tests
+        id: discover
+        shell: bash
         run: |
-          robot --timestampoutputs -d results tests/home.robot
+          mapfile -t files < <(find . -type f -name "*.robot")
+          echo "count=${#files[@]}" >> $GITHUB_OUTPUT
+          printf '%s\n' "${files[@]}" > robot_test_files.txt
+          echo "Arquivos encontrados:"; cat robot_test_files.txt || true
 
-      # Logs sempre ajudam a depurar
+      - name: Smoke (sem testes .robot)
+        if: steps.discover.outputs.count == '0'
+        run: |
+          echo "Nenhum .robot encontrado. Executando smoke:"
+          adb devices
+          adb shell getprop ro.build.version.release
+          echo "Smoke OK ✅"
+
+      - name: Run Robot tests
+        if: steps.discover.outputs.count != '0'
+        run: |
+          mkdir -p results
+          robot --timestampoutputs -d results $(tr '\n' ' ' < robot_test_files.txt)
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-results
+          path: results/
+
       - name: Show logs
         if: always()
         run: |
           echo "=== emulator.log ==="; tail -n 200 /tmp/emulator.log || true
           echo "=== appium.log ==="; tail -n 200 /tmp/appium.log || true
 
-      # Cleanup garante host limpo
       - name: Cleanup
         if: always()
         run: |
