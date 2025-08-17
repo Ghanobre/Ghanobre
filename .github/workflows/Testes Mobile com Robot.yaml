@@ -20,10 +20,10 @@ jobs:
           echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
           echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Start Android emulator (WSL safe + espera reforçada)
+      - name: Start Android emulator (WSL safe + espera simples)
         shell: bash
         run: |
-          # Inicie o AVD (ajuste o nome se quiser usar 'test' em vez de 'test29')
+          # Inicie o AVD (ajuste para 'test' se preferir)
           nohup "$ANDROID_HOME/emulator/emulator" -avd test29 \
             -no-window -no-audio \
             -gpu swiftshader_indirect \
@@ -35,44 +35,18 @@ jobs:
           adb start-server
           adb wait-for-device
 
-          # Espera 1: boot concluído (3 sinais possíveis), até 10 minutos
+          # Espera de boot (apenas sinais clássicos) - até 10 minutos
           for i in {1..600}; do
             bootanim="$(adb shell getprop init.svc.bootanim 2>/dev/null || true)"
             dev_boot="$(adb shell getprop dev.bootcomplete 2>/dev/null || true)"
             sys_boot="$(adb shell getprop sys.boot_completed 2>/dev/null || true)"
             if echo "$bootanim" | grep -q "stopped" || [ "$dev_boot" = "1" ] || [ "$sys_boot" = "1" ]; then
-              echo "Boot (fase 1) concluído."
+              echo "Boot concluído."
               break
             fi
-            echo "aguardando boot (fase 1)..."
+            echo "aguardando boot..."
             sleep 1
           done
-
-          # Espera 2: serviços core do system_server (activity e package), até 5 minutos
-          for i in {1..300}; do
-            if adb shell service list 2>/dev/null | grep -q " activity:" && \
-               adb shell service list 2>/dev/null | grep -q " package:"; then
-              echo "Serviços core OK (activity/package)."
-              break
-            fi
-            echo "aguardando serviços core (activity/package)..."
-            sleep 1
-          done
-
-          # Espera 3: tentar 'settings' (tolerante; até 2 minutos). Se não aparecer, seguimos assim mesmo.
-          settings_ok="no"
-          for i in {1..120}; do
-            if adb shell service list 2>/dev/null | grep -q " settings:"; then
-              echo "Serviço 'settings' disponível."
-              settings_ok="yes"
-              break
-            fi
-            echo "aguardando serviço settings (tolerante)..."
-            sleep 1
-          done
-          if [ "$settings_ok" != "yes" ]; then
-            echo "WARNING: serviço 'settings' não listado; prosseguindo mesmo assim."
-          fi
 
           # Desbloquear e reduzir animações (não falha o job se der erro)
           adb shell input keyevent 82 || true
