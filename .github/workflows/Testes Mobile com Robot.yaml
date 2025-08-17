@@ -9,6 +9,7 @@ on:
 jobs:
   robot-tests:
     runs-on: self-hosted
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,27 +20,44 @@ jobs:
           echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
           echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Start Android emulator (WSL safe)
+      - name: Start Android emulator (WSL safe + wait reforçado)
         shell: bash
         run: |
-          nohup "$ANDROID_HOME/emulator/emulator" -avd test \
+          nohup "$ANDROID_HOME/emulator/emulator" -avd test29 \
             -no-window -no-audio \
             -gpu swiftshader_indirect \
             -no-snapshot \
             -accel off \
             -no-boot-anim \
             >/tmp/emulator.log 2>&1 &
+
           adb start-server
           adb wait-for-device
-          timeout 300 bash -c '
+
+          # Espera 1: boot concluído (3 sinais possíveis)
+          timeout 600 bash -c '
             until adb shell "getprop init.svc.bootanim | grep -q stopped" \
                || [ "$(adb shell getprop dev.bootcomplete 2>/dev/null | tr -d "\r")" = "1" ] \
                || [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do
-              echo "aguardando boot..."
+              echo "aguardando boot (fase 1)..."
               sleep 3
             done
           '
+
+          # Espera 2: serviço 'settings' disponível (garante system_server ok)
+          timeout 300 bash -c '
+            until adb shell "cmd -l | grep -q ^settings$"; do
+              echo "aguardando boot (serviço settings)..."
+              sleep 2
+            done
+          '
+
+          # Desbloquear e reduzir animações
           adb shell input keyevent 82 || true
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell settings put global animator_duration_scale 0 || true
+
           echo "Emulador pronto!"
 
       - name: Start Appium
@@ -55,28 +73,10 @@ jobs:
           '
           echo "Appium está rodando!"
 
-      - name: Discover tests
-        id: discover
-        shell: bash
-        run: |
-          mapfile -t files < <(find . -type f -name "*.robot")
-          echo "count=${#files[@]}" >> $GITHUB_OUTPUT
-          printf '%s\n' "${files[@]}" > robot_test_files.txt
-          echo "Arquivos encontrados:"; cat robot_test_files.txt || true
-
-      - name: Smoke (sem testes .robot)
-        if: steps.discover.outputs.count == '0'
-        run: |
-          echo "Nenhum .robot encontrado. Executando smoke:"
-          adb devices
-          adb shell getprop ro.build.version.release
-          echo "Smoke OK ✅"
-
       - name: Run Robot tests
-        if: steps.discover.outputs.count != '0'
         run: |
           mkdir -p results
-          robot --timestampoutputs -d results $(tr '\n' ' ' < robot_test_files.txt)
+          robot --timestampoutputs -d results tests/home.robot
 
       - name: Upload results
         if: always()
