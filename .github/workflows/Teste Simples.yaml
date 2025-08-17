@@ -7,7 +7,7 @@ on:
 
 jobs:
   hello-world:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       # Passo 1: Faz checkout do repositório (opcional, mas recomendado)
