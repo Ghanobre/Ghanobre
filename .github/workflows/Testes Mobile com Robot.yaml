@@ -4,15 +4,20 @@ on:
   push:
     branches: 
       - master
+      -main
   pull_request:
     branches: 
       - master
+      -main
 
 jobs:
   robot-tests:
     runs-on: self-hosted
 
     steps:
+      - name: Fazer checkout do repositório
+        uses: actions/checkout@v4
+
       - name: Iniciar emuladorr
         run: |
           export ANDROID_AVD_HOME=/home/runner/.config/.android/avd
