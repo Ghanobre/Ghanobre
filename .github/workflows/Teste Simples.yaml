@@ -1,22 +1,22 @@
-name: Teste WSL Self-hosted
+  name: Teste WSL Self-hosted
 
-on:
-  push:
-    branches: master 
+  on:
+    push:
+      branches: - master 
 
-jobs:
-  hello-world:
-    runs-on: self-hosted 
-    steps:
-      - name: Sanity
-        run: |
-          set -x
-          whoami; uname -a; which git; which tar; which unzip
-          git --version
-          df -h | head
+  jobs:
+    hello-world:
+      runs-on: self-hosted 
+      steps:
+        - name: Sanity
+          run: |
+            set -x
+            whoami; uname -a; which git; which tar; which unzip
+            git --version
+            df -h | head
 
-      - name: Checkout
-        uses: actions/checkout@v4
+        - name: Checkout
+          uses: actions/checkout@v4
 
-      - name: OK
-        run: echo "WSL runner OK ✅"
+        - name: OK
+          run: echo "WSL runner OK ✅"
