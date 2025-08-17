@@ -20,13 +20,13 @@ jobs:
           echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
           echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Start Android emulator (WSL safe + wait reforçado)
+            - name: Start Android emulator (WSL safe + wait reforçado)
         shell: bash
         run: |
           nohup "$ANDROID_HOME/emulator/emulator" -avd test29 \
             -no-window -no-audio \
             -gpu swiftshader_indirect \
-            -no-snapshot \
+            -no-snapshot -wipe-data \
             -accel off \
             -no-boot-anim \
             >/tmp/emulator.log 2>&1 &
@@ -34,7 +34,7 @@ jobs:
           adb start-server
           adb wait-for-device
 
-          # Espera 1: boot concluído (3 sinais possíveis)
+          # Espera 1: boot concluído (aumenta para 10min)
           timeout 600 bash -c '
             until adb shell "getprop init.svc.bootanim | grep -q stopped" \
                || [ "$(adb shell getprop dev.bootcomplete 2>/dev/null | tr -d "\r")" = "1" ] \
@@ -44,13 +44,22 @@ jobs:
             done
           '
 
-          # Espera 2: serviço 'settings' disponível (garante system_server ok)
+          # Espera 2: serviços core do system_server (activity e package)
           timeout 300 bash -c '
-            until adb shell "cmd -l | grep -q ^settings$"; do
-              echo "aguardando boot (serviço settings)..."
+            until adb shell "service list | grep -q '[[:space:]]activity:'" \
+              && adb shell "service list | grep -q '[[:space:]]package:'"; do
+              echo "aguardando serviços core (activity/package)..."
               sleep 2
             done
           '
+
+          # Espera 3: tentar 'settings' (tolerante; se não vier, seguimos mesmo assim)
+          timeout 120 bash -c '
+            until adb shell "service list | grep -q '[[:space:]]settings:'" ; do
+              echo "aguardando serviço settings (tolerante)..."
+              sleep 2
+            done
+          ' || echo "WARNING: serviço 'settings' não listado, seguindo assim mesmo."
 
           # Desbloquear e reduzir animações
           adb shell input keyevent 82 || true
@@ -59,6 +68,18 @@ jobs:
           adb shell settings put global animator_duration_scale 0 || true
 
           echo "Emulador pronto!"
+
+          # Sanity check rápido (não faz o job falhar)
+          adb shell getprop ro.build.version.release || true
+          adb shell pm list packages | head -n 5 || true
+
+          # Se algo der ruim até aqui, despeja log e falha
+          if ! adb shell getprop ro.build.version.release >/dev/null 2>&1; then
+            echo "=== emulator.log (tail) ==="
+            tail -n 200 /tmp/emulator.log || true
+            exit 1
+          fi
+
 
       - name: Start Appium
         shell: bash
