@@ -12,6 +12,8 @@ Abrir Configuracoes e Fechar
     ...    platformName=${PLATFORM}
     ...    automationName=UiAutomator2
     ...    deviceName=${DEVICE_NAME}
+    ...    appium:skipDeviceInitialization=true
+    ...    appium:newCommandTimeout=120
     ...    appPackage=com.android.settings
     ...    appActivity=.Settings
     Sleep    2s
