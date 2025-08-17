@@ -1,0 +1,20 @@
+name: Teste Simples
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  hello-world:
+    runs-on: self-hosted
+
+    steps:
+      - name: Check runner info
+        run: |
+          echo "Rodando no runner: $RUNNER_NAME"
+          echo "Sistema operacional: $RUNNER_OS"
+
+      - name: Mensagem de sucesso
+        run: |
+          echo "O workflow está funcionando corretamente 🚀"
