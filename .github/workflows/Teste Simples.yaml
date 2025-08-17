@@ -10,11 +10,20 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      # Passo 1: Faz checkout do repositório (opcional, mas recomendado)
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      # Passo 2: Exibe informações do runner
       - name: Check runner info
         run: |
-          echo "Rodando no runner: $RUNNER_NAME"
-          echo "Sistema operacional: $RUNNER_OS"
+          set -x  # mostra cada comando
+          echo "Rodando no runner: ${RUNNER_NAME:-Desconhecido}"
+          echo "Sistema operacional: ${RUNNER_OS:-Desconhecido}"
+          echo "Diretório de trabalho: $GITHUB_WORKSPACE"
 
+      # Passo 3: Mensagem de sucesso
       - name: Mensagem de sucesso
         run: |
           echo "O workflow está funcionando corretamente 🚀"
+          exit 0
