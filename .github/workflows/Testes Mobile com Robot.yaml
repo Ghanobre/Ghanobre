@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Python e libs no MESMO interpretador do job
+      # (Recomendado) Garante Python e libs no MESMO interpretador do job
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -31,90 +31,42 @@ jobs:
           echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
           echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Start Android emulator (WSL safe + espera robusta com retry)
+      - name: Start Android emulator (WSL safe + espera simples)
         shell: bash
         run: |
-          start_emulator() {
-            echo ">> Iniciando emulador ($1)"
-            nohup "$ANDROID_HOME/emulator/emulator" -avd "$1" \
-              -no-window -no-audio \
-              -gpu swiftshader_indirect \
-              -no-snapshot $2 \
-              -accel off \
-              -no-boot-anim \
-              >/tmp/emulator.log 2>&1 &
-            adb start-server
-            adb wait-for-device
-          }
+          # Inicie o AVD (ajuste para 'test' se preferir)
+          nohup "$ANDROID_HOME/emulator/emulator" -avd test29x86 \
+            -no-window -no-audio \
+            -gpu swiftshader_indirect \
+            -no-snapshot -wipe-data \
+            -accel off \
+            -no-boot-anim \
+            >/tmp/emulator.log 2>&1 &
 
-          wait_boot_basic() {
-            echo ">> Aguardando sinais básicos de boot (até 10min)"
-            for i in {1..600}; do
-              bootanim="$(adb shell getprop init.svc.bootanim 2>/dev/null || true)"
-              dev_boot="$(adb shell getprop dev.bootcomplete 2>/dev/null || true)"
-              sys_boot="$(adb shell getprop sys.boot_completed 2>/dev/null || true)"
-              if echo "$bootanim" | grep -q "stopped" || [ "$dev_boot" = "1" ] || [ "$sys_boot" = "1" ]; then
-                echo ">> Boot básico concluído."
-                return 0
-              fi
-              echo "aguardando boot..."
-              sleep 1
-            done
-            return 1
-          }
+          adb start-server
+          adb wait-for-device
 
-          wait_services_core() {
-            echo ">> Aguardando serviços core (activity/package) até 5min"
-            for i in {1..300}; do
-              services="$(adb shell service list 2>/dev/null || true)"
-              if echo "$services" | grep -q " activity:" && echo "$services" | grep -q " package:"; then
-                echo ">> Serviços core OK."
-                return 0
-              fi
-              echo "aguardando services activity/package..."
-              sleep 1
-            done
-            return 1
-          }
-
-          AVD_NAME="test29x86"   # ajuste se usar outro nome
-          # 1ª tentativa (sem wipe)
-          start_emulator "$AVD_NAME"
-          if ! wait_boot_basic; then
-            echo "!! Boot básico não completou na 1ª tentativa."
-          fi
-
-          if ! wait_services_core; then
-            echo "!! Serviços core não apareceram, tentando retry com -wipe-data..."
-            # Dump de logs da 1ª tentativa
-            echo "=== emulator.log (tail 1ª tentativa) ==="
-            tail -n 120 /tmp/emulator.log || true
-
-            # Mata e tenta novamente com -wipe-data
-            pkill -f "emulator-" || true
-            adb kill-server || true
-            sleep 2
-            start_emulator "$AVD_NAME" "-wipe-data"
-
-            if ! wait_boot_basic; then
-              echo "!! Boot básico não completou na 2ª tentativa."
+          # Espera de boot (apenas sinais clássicos) - até 10 minutos
+          for i in {1..600}; do
+            bootanim="$(adb shell getprop init.svc.bootanim 2>/dev/null || true)"
+            dev_boot="$(adb shell getprop dev.bootcomplete 2>/dev/null || true)"
+            sys_boot="$(adb shell getprop sys.boot_completed 2>/dev/null || true)"
+            if echo "$bootanim" | grep -q "stopped" || [ "$dev_boot" = "1" ] || [ "$sys_boot" = "1" ]; then
+              echo "Boot concluído."
+              break
             fi
+            echo "aguardando boot..."
+            sleep 1
+          done
 
-            if ! wait_services_core; then
-              echo "!! Serviços core ainda indisponíveis após retry."
-              echo "=== emulator.log (tail 2ª tentativa) ==="
-              tail -n 200 /tmp/emulator.log || true
-              exit 1
-            fi
-          fi
-
-          # Desbloquear e reduzir animações (não falha se der erro)
+          # Desbloquear e reduzir animações (não falha o job se der erro)
           adb shell input keyevent 82 || true
           adb shell settings put global window_animation_scale 0 || true
           adb shell settings put global transition_animation_scale 0 || true
           adb shell settings put global animator_duration_scale 0 || true
 
           echo "Emulador pronto!"
+          # Sanity checks (não falham o job)
           adb shell getprop ro.build.version.release || true
           adb shell pm list packages | head -n 5 || true
 
@@ -135,10 +87,7 @@ jobs:
       - name: Run Robot tests
         run: |
           mkdir -p results
-          # DICA: para emulador WSL, evitar inicializações, pule device init e hidden API
-          # Adapte seu tests/home.robot com:
-          #   appium:skipDeviceInitialization=true
-          #   appium:ignoreHiddenApiPolicyError=true
+          # chama o Robot no MESMO Python configurado acima
           python -m robot --timestampoutputs -d results tests/home.robot
 
       - name: Upload results
