@@ -9,21 +9,9 @@ on:
 jobs:
   robot-tests:
     runs-on: self-hosted
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # (Recomendado) Garante Python e libs no MESMO interpretador do job
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Instalar dependências Python
-        run: |
-          python -m pip install -U pip
-          python -m pip install robotframework robotframework-appiumlibrary Appium-Python-Client robotframework-pythonlibcore
 
       - name: Export env for job
         run: |
@@ -31,63 +19,57 @@ jobs:
           echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
           echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Start Android emulator (WSL safe + espera simples)
+      - name: Start Android emulator (WSL safe)
         shell: bash
         run: |
-          # Inicie o AVD (ajuste para 'test' se preferir)
           nohup "$ANDROID_HOME/emulator/emulator" -avd test29x86 \
             -no-window -no-audio \
             -gpu swiftshader_indirect \
-            -no-snapshot -wipe-data \
+            -no-snapshot \
             -accel off \
             -no-boot-anim \
             >/tmp/emulator.log 2>&1 &
-
           adb start-server
           adb wait-for-device
 
-          # Espera de boot (apenas sinais clássicos) - até 10 minutos
-          for i in {1..600}; do
-            bootanim="$(adb shell getprop init.svc.bootanim 2>/dev/null || true)"
-            dev_boot="$(adb shell getprop dev.bootcomplete 2>/dev/null || true)"
-            sys_boot="$(adb shell getprop sys.boot_completed 2>/dev/null || true)"
-            if echo "$bootanim" | grep -q "stopped" || [ "$dev_boot" = "1" ] || [ "$sys_boot" = "1" ]; then
-              echo "Boot concluído."
-              break
-            fi
-            echo "aguardando boot..."
-            sleep 1
-          done
+          echo "Aguardando boot (fase 1)..."
+          timeout 300 bash -c '
+            until adb shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; do
+              echo "aguardando boot (fase 1)..."
+              sleep 3
+            done
+          '
+          echo "Boot (fase 1) concluído."
 
-          # Desbloquear e reduzir animações (não falha o job se der erro)
+          echo "Aguardando serviços core (package manager)..."
+          timeout 180 bash -c '
+            until adb shell cmd package list packages >/dev/null 2>&1; do
+              echo "aguardando serviço package..."
+              sleep 3
+            done
+          '
+          echo "Serviço package ativo!"
+
           adb shell input keyevent 82 || true
-          adb shell settings put global window_animation_scale 0 || true
-          adb shell settings put global transition_animation_scale 0 || true
-          adb shell settings put global animator_duration_scale 0 || true
-
           echo "Emulador pronto!"
-          # Sanity checks (não falham o job)
-          adb shell getprop ro.build.version.release || true
-          adb shell pm list packages | head -n 5 || true
 
       - name: Start Appium
         shell: bash
         run: |
           nohup appium --base-path /wd/hub --port 4723 >/tmp/appium.log 2>&1 &
           echo "Aguardando o Appium iniciar..."
-          for i in {1..60}; do
-            if curl -sf http://127.0.0.1:4723/wd/hub/status | grep -q "\"ready\": *true"; then
-              echo "Appium está rodando!"
-              break
-            fi
-            echo "Esperando Appium..."
-            sleep 1
-          done
+          timeout 60 bash -c '
+            until curl -s http://127.0.0.1:4723/wd/hub/status | grep -q "\"ready\": *true"; do
+              echo "Esperando Appium..."
+              sleep 2
+            done
+          '
+          echo "Appium está rodando!"
 
       - name: Run Robot tests
         run: |
           mkdir -p results
-          # chama o Robot no MESMO Python configurado acima
+          # chama o Robot no MESMO Python configurado
           python -m robot --timestampoutputs -d results tests/home.robot
 
       - name: Upload results
@@ -100,8 +82,8 @@ jobs:
       - name: Show logs
         if: always()
         run: |
-          echo "=== emulator.log (tail) ==="; tail -n 200 /tmp/emulator.log || true
-          echo "=== appium.log (tail) ==="; tail -n 200 /tmp/appium.log || true
+          echo "=== emulator.log ==="; tail -n 200 /tmp/emulator.log || true
+          echo "=== appium.log ==="; tail -n 200 /tmp/appium.log || true
 
       - name: Cleanup
         if: always()
