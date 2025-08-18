@@ -1,0 +1,114 @@
+name: Testes Mobile com Robot
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  robot-tests:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Garante Python disponível no job e no PATH
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # Instala as dependências no MESMO Python configurado acima
+      - name: Instalar dependências Python
+        run: |
+          python -m pip install -U pip
+          python -m pip install robotframework robotframework-appiumlibrary Appium-Python-Client robotframework-pythonlibcore
+
+      # Exporta variáveis do Android/Emulador para o job
+      - name: Export env for job
+        run: |
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
+          echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Start Android emulator (WSL safe + espera package)
+        shell: bash
+        run: |
+          # Ajuste o nome do AVD conforme você criou: test29x86 ou test
+          AVD_NAME="test29x86"
+
+          nohup "$ANDROID_HOME/emulator/emulator" -avd "$AVD_NAME" \
+            -no-window -no-audio \
+            -gpu swiftshader_indirect \
+            -no-snapshot \
+            -accel off \
+            -no-boot-anim \
+            >/tmp/emulator.log 2>&1 &
+
+          adb start-server
+          adb wait-for-device
+
+          echo "Aguardando boot (fase 1)..."
+          timeout 300 bash -c '
+            until adb shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; do
+              echo "aguardando boot (fase 1)..."
+              sleep 3
+            done
+          '
+          echo "Boot (fase 1) concluído."
+
+          echo "Aguardando serviço package (Package Manager)..."
+          timeout 180 bash -c '
+            until adb shell cmd package list packages >/dev/null 2>&1; do
+              echo "aguardando serviço package..."
+              sleep 3
+            done
+          '
+          echo "Serviço package ativo!"
+
+          # Desbloquear e reduzir animações (best-effort)
+          adb shell input keyevent 82 || true
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell settings put global animator_duration_scale 0 || true
+          echo "Emulador pronto!"
+
+      - name: Start Appium
+        shell: bash
+        run: |
+          nohup appium --base-path /wd/hub --port 4723 >/tmp/appium.log 2>&1 &
+          echo "Aguardando o Appium iniciar..."
+          timeout 60 bash -c '
+            until curl -s http://127.0.0.1:4723/wd/hub/status | grep -q "\"ready\": *true"; do
+              echo "Esperando Appium..."
+              sleep 2
+            done
+          '
+          echo "Appium está rodando!"
+
+      - name: Run Robot tests
+        run: |
+          mkdir -p results
+          # roda o Robot no MESMO Python configurado acima
+          python -m robot --timestampoutputs -d results tests/home.robot
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-results
+          path: results/
+
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== emulator.log (tail) ==="; tail -n 200 /tmp/emulator.log || true
+          echo "=== appium.log (tail) ==="; tail -n 200 /tmp/appium.log || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f "appium" || true
+          adb emu kill || true
+          pkill -f "emulator-" || true

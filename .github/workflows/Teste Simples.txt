@@ -1,0 +1,93 @@
+name: Testes Mobile com Robot
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  robot-tests:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Reforça env no job (além do .env do serviço)
+      - name: Export env for job
+        run: |
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_AVD_HOME=$HOME/.android/avd" >> $GITHUB_ENV
+          echo "PATH=$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/emulator:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Debug env
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
+          which adb || true
+          which emulator || true
+          which appium || true
+
+      - name: Start Android emulator (WSL safe)
+        shell: bash
+        run: |
+          nohup "$ANDROID_HOME/emulator/emulator" -avd test \
+            -no-window -no-audio \
+            -gpu swiftshader_indirect \
+            -no-snapshot \
+            -accel off \
+            -no-boot-anim \
+            >/tmp/emulator.log 2>&1 &
+
+          adb start-server
+          adb wait-for-device
+
+          # Espera resiliente: 3 sinais diferentes
+          timeout 300 bash -c '
+            until adb shell "getprop init.svc.bootanim | grep -q stopped" \
+               || [ "$(adb shell getprop dev.bootcomplete 2>/dev/null | tr -d "\r")" = "1" ] \
+               || [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do
+              echo "aguardando boot..."
+              sleep 3
+            done
+          '
+
+          # Desbloquear e reduzir animações
+          adb shell input keyevent 82 || true
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell settings put global animator_duration_scale 0 || true
+          echo "Emulador pronto!"
+
+      - name: Start Appium
+        shell: bash
+        run: |
+          nohup appium --base-path /wd/hub --port 4723 >/tmp/appium.log 2>&1 &
+          echo "Aguardando o Appium iniciar..."
+          timeout 60 bash -c '
+            until curl -s http://127.0.0.1:4723/wd/hub/status | grep -q "\"ready\": *true"; do
+              echo "Esperando Appium..."
+              sleep 2
+            done
+          '
+          echo "Appium está rodando!"
+
+      - name: Run Robot tests
+        run: |
+          robot --timestampoutputs -d results tests/home.robot
+
+      # Logs sempre ajudam a depurar
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== emulator.log ==="; tail -n 200 /tmp/emulator.log || true
+          echo "=== appium.log ==="; tail -n 200 /tmp/appium.log || true
+
+      # Cleanup garante host limpo
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f "appium" || true
+          adb emu kill || true
+          pkill -f "emulator-" || true
